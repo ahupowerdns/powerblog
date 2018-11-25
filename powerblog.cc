@@ -5,7 +5,8 @@
 #include <iostream>
 #include <signal.h>
 #include <stdexcept>
-
+#include "comboaddress.hh"
+#include <thread>
 using namespace std;
 
 struct PBLogEvent
@@ -40,18 +41,18 @@ using DBType=decltype(prepareDatabase());
 
 DBType* g_db;
 
-static h2o_accept_ctx_t g_accept_ctx;
-void setupSSL()
+
+void setupSSL(h2o_accept_ctx_t& accept_ctx)
 {
   SSL_load_error_strings();
   SSL_library_init();
   OpenSSL_add_all_algorithms();
 
-  g_accept_ctx.ssl_ctx = SSL_CTX_new(SSLv23_server_method());
-  g_accept_ctx.expect_proxy_line = 0; // makes valgrind happy
+  accept_ctx.ssl_ctx = SSL_CTX_new(SSLv23_server_method());
+  accept_ctx.expect_proxy_line = 0; // makes valgrind happy
 
-  SSL_CTX_set_options(g_accept_ctx.ssl_ctx, SSL_OP_NO_SSLv2);
-  SSL_CTX_set_ecdh_auto(g_accept_ctx.ssl_ctx, 1);
+  SSL_CTX_set_options(accept_ctx.ssl_ctx, SSL_OP_NO_SSLv2);
+  SSL_CTX_set_ecdh_auto(accept_ctx.ssl_ctx, 1);
 
   /*
    /etc/letsencrypt/live/live.powerdns.org/fullchain.pem
@@ -63,22 +64,24 @@ void setupSSL()
     
   
 /* load certificate and private key */
-  if(SSL_CTX_use_certificate_chain_file(g_accept_ctx.ssl_ctx, cert_file) != 1) {
+  if(SSL_CTX_use_certificate_chain_file(accept_ctx.ssl_ctx, cert_file) != 1) {
     fprintf(stderr, "an error occurred while trying to load server certificate file:%s\n", cert_file);
     throw std::runtime_error("certificate key");
   }
   
-  if(SSL_CTX_use_PrivateKey_file(g_accept_ctx.ssl_ctx, key_file, SSL_FILETYPE_PEM) != 1) {
+  if(SSL_CTX_use_PrivateKey_file(accept_ctx.ssl_ctx, key_file, SSL_FILETYPE_PEM) != 1) {
     fprintf(stderr, "an error occurred while trying to load private key file:%s\n", key_file);
     throw std::runtime_error("private key");
   }
 
   char ciphers[]="DEFAULT:!MD5:!DSS:!DES:!RC4:!RC2:!SEED:!IDEA:!NULL:!ADH:!EXP:!SRP:!PSK";
-  if(SSL_CTX_set_cipher_list(g_accept_ctx.ssl_ctx, ciphers) != 1) {
+  if(SSL_CTX_set_cipher_list(accept_ctx.ssl_ctx, ciphers) != 1) {
     fprintf(stderr, "ciphers could not be set: %s\n", ciphers);
     throw std::runtime_error("algorithms");
   }
 }
+
+std::map<h2o_req_t*, unsigned int> g_waiters;
 
 static void emitAllEventsSince(h2o_req_t* req, unsigned int since)
 {
@@ -92,12 +95,16 @@ static void emitAllEventsSince(h2o_req_t* req, unsigned int since)
   cout<<" got "<<events.size()<<" events"<<endl;
   for(auto &e : events) {
     nlohmann::json event;
-    event = e.content;
+    event["message"]=e.content;
+    event["timestamp"]=e.timestamp;
+    event["channel"]=e.channel;
+    event["originator"]=e.originator;
     allEvents["msgs"].push_back(event);
     if(e.id > maxID)
       maxID = e.id;
   }
   allEvents["last"]=maxID;
+  allEvents["numclients"]=g_waiters.size();
   req->res.status = 200;
   req->res.reason = "OK";
   h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, 
@@ -120,7 +127,7 @@ static int allEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
   return 0;
 }
 
-std::map<h2o_req_t*, unsigned int> g_waiters;
+
 
 static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
 {
@@ -128,10 +135,14 @@ static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
     return -1;
 
   string path(req->path.base, req->path.len);
+  h2o_socket_t* sock = req->conn->callbacks->get_socket(req->conn);
+  ComboAddress remote;
+  h2o_socket_getpeername(sock, (struct sockaddr*)&remote);
 
   if(auto pos = path.find("?since="); pos != string::npos) {
     uint32_t since = atoi(path.c_str() + pos + 7);
-    cout<<"Wants updates since " << since <<", path: "<<path<<endl;
+    cout<<remote.toString()<<" wants updates since " << since <<", path: "<<path<<endl;
+
 
     using namespace sqlite_orm;
     auto count = g_db->count<PBLogEvent>(where(c(&PBLogEvent::id) > since));
@@ -140,8 +151,16 @@ static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
       emitAllEventsSince(req, since);
     }
     else {
-      cout<<" nothing available, putting on wait list"<<endl;
       g_waiters[req]=since;
+      cout<<" nothing available, putting on wait list (" << g_waiters.size()<<")"<<endl;
+      h2o_req_t** parent = (h2o_req_t**)h2o_mem_alloc_shared(&req->pool, sizeof(h2o_req_t*), [](void* _self) {
+          h2o_req_t** r = (h2o_req_t**)_self;
+          cout << "Connection "<<(void*)*r<<" went away, we still had a waiter on it "<<g_waiters.count(*r)<<endl;
+          g_waiters.erase(*r);
+          for(const auto& w : g_waiters)
+            cout <<"  "<<(void*)w.first<<endl;
+        });
+      *parent = req;
     }
     return 0;
   }
@@ -156,12 +175,13 @@ static int sendHandler(h2o_handler_t* handler, h2o_req_t* req)
     return -1;
 
   std::string content(req->entity.base, req->entity.len);
+  auto msg = nlohmann::json::parse(content);
   PBLogEvent pbl;
   pbl.id = 0;
   pbl.timestamp = time(0);
-  pbl.content = content;
+  pbl.content = msg["msg"];
   pbl.originator = "unknown";
-  pbl.channel = 1;
+  pbl.channel = msg["channel"].get<int>();
 
   g_db->insert(pbl);
 
@@ -178,6 +198,7 @@ static int sendHandler(h2o_handler_t* handler, h2o_req_t* req)
   for(auto iter = g_waiters.begin(); iter != g_waiters.end(); ) {
     auto nreq = iter->first;
     auto since = iter->second;
+    cout<<"  Erasing "<<(void*)iter->first<<endl;
     iter = g_waiters.erase(iter);
     emitAllEventsSince(nreq, since);
   }
@@ -186,6 +207,60 @@ static int sendHandler(h2o_handler_t* handler, h2o_req_t* req)
   
 }
 
+void forwarderServer()
+{
+  h2o_globalconf_t config;
+  h2o_context_t ctx;
+  h2o_accept_ctx_t accept_ctx;
+
+  h2o_config_init(&config);
+  h2o_hostconf_t* hostconf = h2o_config_register_host(&config, h2o_iovec_init(H2O_STRLIT("default")), 65535);
+
+  h2o_pathconf_t *pathconf = h2o_config_register_path(hostconf, "/", 0);
+  h2o_handler_t *handler = h2o_create_handler(pathconf, sizeof(*handler));
+  handler->on_req = [](h2o_handler_t* handler, h2o_req_t* req)
+    {
+      h2o_send_redirect(req, 301, "Moved Permanently", H2O_STRLIT("https://live.powerdns.org/"));
+      return 0;
+    };
+  
+  h2o_context_init(&ctx, h2o_evloop_create(), &config);
+  
+  accept_ctx.ctx = &ctx;
+  accept_ctx.hosts = config.hosts;
+  accept_ctx.ssl_ctx=0;
+  
+  struct sockaddr_in addr;
+  int fd, reuseaddr_flag = 1;
+  h2o_socket_t *sock;
+  
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(0);
+  addr.sin_port = htons(80);
+  
+  if ((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1 ||
+      setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_flag, sizeof(reuseaddr_flag)) != 0 ||
+      bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, SOMAXCONN) != 0) {
+    throw runtime_error("Unable to bind to socket: "+string(strerror(errno)));
+  }
+
+  sock = h2o_evloop_socket_create(ctx.loop, fd, H2O_SOCKET_FLAG_DONT_READ);
+  sock->data = &accept_ctx;
+  h2o_socket_read_start(sock, [](h2o_socket_t *listener, const char *err) {
+      if (err != NULL) {
+        return;
+      }
+      h2o_socket_t *sock;
+      
+      if ((sock = h2o_evloop_socket_accept(listener)) == NULL)
+        return;
+      h2o_accept((h2o_accept_ctx_t*)listener->data, sock);
+    });
+  while (h2o_evloop_run(ctx.loop, INT32_MAX) == 0)
+    ;
+
+}
 
 int main()
 try
@@ -195,7 +270,7 @@ try
   
   h2o_globalconf_t config;
   h2o_context_t ctx;
-
+  h2o_accept_ctx_t accept_ctx;
   
   h2o_config_init(&config);
   h2o_hostconf_t* hostconf = h2o_config_register_host(&config, h2o_iovec_init(H2O_STRLIT("default")), 65535);
@@ -217,10 +292,10 @@ try
   
   h2o_context_init(&ctx, h2o_evloop_create(), &config);
   
-  g_accept_ctx.ctx = &ctx;
-  g_accept_ctx.hosts = config.hosts;
+  accept_ctx.ctx = &ctx;
+  accept_ctx.hosts = config.hosts;
 
-  setupSSL();
+  setupSSL(accept_ctx);
   
   struct sockaddr_in addr;
   int fd, reuseaddr_flag = 1;
@@ -238,6 +313,7 @@ try
   }
 
   sock = h2o_evloop_socket_create(ctx.loop, fd, H2O_SOCKET_FLAG_DONT_READ);
+  sock->data = &accept_ctx;
   h2o_socket_read_start(sock, [](h2o_socket_t *listener, const char *err) {
       if (err != NULL) {
         return;
@@ -246,8 +322,12 @@ try
       
       if ((sock = h2o_evloop_socket_accept(listener)) == NULL)
         return;
-      h2o_accept(&g_accept_ctx, sock);
+      h2o_accept((h2o_accept_ctx_t*)listener->data, sock);
     });
+
+  std::thread fwthread(forwarderServer);
+  fwthread.detach();
+  
   while (h2o_evloop_run(ctx.loop, INT32_MAX) == 0)
     ;
 }
