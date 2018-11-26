@@ -1,40 +1,41 @@
+<!doctype html>
 <html>
 <head>
+  <title>Mars NASA InSight Landing</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
   <script src="ext/jquery-3.3.1.min.js"></script>
   <script src="ext/js.cookie.js"></script>
 </head>
 <body>
-  <center>Welkom bij de Mars NASA InSight Landing! Uitzending begint vanavond om 20:00 uur. <a href="uitleg.html">Uitleg.</a></center>
-  <br/>
-  <table width="100%">
-    <tr>
-      <td valign="top" width="40%">
-        <div id="logs">
+  <div class="container-fluid">
+    <div class="row justify-content-center">
+      Welkom bij de Mars NASA InSight Landing! Uitzending begint vanavond om 20:00 uur. <a href="uitleg.html">Uitleg</a>.
+    </div>
+    <div class="row">
+      <div class="col">
+        <div id="logs"></div>
+      </div>
+      <div class="col-6">
+        <div class="embed-responsive embed-responsive-16by9">
+          <iframe class="embed-responsive-item" src="https://www.youtube.com/embed/z8NvcbkvxXw" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
         </div>
-      </td>
-      <td valign="top" width="40%">
-        <iframe width="868" height="488" src="https://www.youtube.com/embed/z8NvcbkvxXw" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-        <center>
-        <b>Vul je naam in, type je vraag & druk op enter!</b>
-        <br/>
-        Naam:<input size="15" id="name" type="text" value="Naam!"/>
-        <textarea cols="80" id="msg" type="text"></textarea>
-        <br/>
-        <input type="button" value="Reload" hidden id="reload" onClick="javascript:triggerReload();"/>
-        </center>
-      </td>
-      
-      <td valign="top" width="40%">
-
-        <div id="logs2">
-          
+        <div class="form-group">
+          <form>
+             <label>Vul je naam in, type je vraag & druk op enter!</label>
+             <input id="name" type="text" class="form-control" placeholder="Je naam"/>
+             <textarea rows="3" id="msg" type="text" class="form-control"></textarea>
+             <input type="button" value="Reload" hidden id="reload" onClick="javascript:triggerReload();"/>
+          </form>
         </div>
-      </td>
-    </tr>
-  </table>
-
-  <br/>
-
+      </div>
+      <div class="col">
+        <div id="logs2"></div>
+      </div>
+    </div>
+  </div>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous"></script>
   <script src="main.js"></script>
 </body>
 </html>
