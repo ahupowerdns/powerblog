@@ -83,31 +83,35 @@ void setupSSL(h2o_accept_ctx_t& accept_ctx)
 
 std::map<h2o_req_t*, unsigned int> g_waiters;
 
-static void emitAllEventsSince(h2o_req_t* req, unsigned int since)
+static void emitAllEventsSince(h2o_req_t* req, unsigned int since, bool mustReload=false)
 {
   cout<<"Going to emit all events since "<<since<<endl;
   nlohmann::json allEvents;
   allEvents["msgs"] = nlohmann::json::array();
 
-  using namespace sqlite_orm;
-  auto events = g_db->get_all<PBLogEvent>(where(c(&PBLogEvent::id) > since));
-  unsigned int maxID=0;
-  cout<<" got "<<events.size()<<" events"<<endl;
-  for(auto &e : events) {
-    nlohmann::json event;
-    event["id"]=e.id;
-    event["message"]=e.content;
-    event["timestamp"]=e.timestamp;
-    event["channel"]=e.channel;
-    event["originator"]=e.originator;
-    allEvents["msgs"].push_back(event);
-    if(e.id > maxID)
-      maxID = e.id;
+  if(!mustReload) {
+    using namespace sqlite_orm;
+    auto events = g_db->get_all<PBLogEvent>(where(c(&PBLogEvent::id) > since));
+    unsigned int maxID=0;
+    cout<<" got "<<events.size()<<" events"<<endl;
+    for(auto &e : events) {
+      nlohmann::json event;
+      event["id"]=e.id;
+      event["message"]=e.content;
+      event["timestamp"]=e.timestamp;
+      event["channel"]=e.channel;
+      event["originator"]=e.originator;
+      allEvents["msgs"].push_back(event);
+      if(e.id > maxID)
+        maxID = e.id;
+    }
+    allEvents["last"]=maxID;
   }
-  allEvents["last"]=maxID;
-  allEvents["numclients"]=g_waiters.size();
+
   if(!since)
     allEvents["restart"]=true;
+  if(mustReload)
+    allEvents["reload"]=true;
   
   req->res.status = 200;
   req->res.reason = "OK";
@@ -131,11 +135,35 @@ static int allEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
   return 0;
 }
 
+bool isAdmin(h2o_req_t* req)
+{
+  string hdr;
+  string val;
+  for (unsigned int i = 0; i != req->headers.size; ++i) {
+    hdr.assign(req->headers.entries[i].name->base, req->headers.entries[i].name->len);
+    // cookie: name=ahu
+    if(hdr=="cookie") {
+      val.assign(req->headers.entries[i].value.base, req->headers.entries[i].value.len);
+      if(val.find("adminpw=123456789") != string::npos)
+        return true;
+    }
+  }
+
+  return false;
+}
+
 static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
 {
   if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("GET")))
     return -1;
+  for (unsigned int i = 0; i != req->headers.size; ++i) {
+    cout<<std::string(req->headers.entries[i].name->base, req->headers.entries[i].name->len);
+    cout<<": ";
+    cout<<std::string(req->headers.entries[i].value.base, req->headers.entries[i].value.len);
+    cout<<endl;
+  }
 
+  
   string path(req->path.base, req->path.len);
   h2o_socket_t* sock = req->conn->callbacks->get_socket(req->conn);
   ComboAddress remote;
@@ -176,6 +204,11 @@ try
   if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("POST")))
     return -1;
 
+  if(!isAdmin(req)) {
+    h2o_send_error_400(req, "Bad Request", "PowerBlog could not understand your query", 0);
+    return 0;
+  }
+  
   std::string content(req->entity.base, req->entity.len);
   
   g_db->remove<PBLogEvent>(atoi(content.c_str()));
@@ -206,6 +239,44 @@ catch(std::exception& e)
   return 0;
 }
 
+static int reloadHandler(h2o_handler_t* handler, h2o_req_t* req)
+try
+{
+  if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("POST")))
+    return -1;
+
+  if(!isAdmin(req)) {
+    h2o_send_error_400(req, "Bad Request", "PowerBlog could not understand your query", 0);
+    return 0;
+  }
+  
+  req->res.status = 200;
+  req->res.reason = "OK";
+  h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, 
+                 NULL, H2O_STRLIT("application/json"));
+  nlohmann::json ret;
+  ret["status"]="ok";
+  std::string str = ret.dump();
+  h2o_send_inline(req, str.c_str(), str.size());
+  
+  cout<<"There are "<<g_waiters.size()<< " waiters that need to hear about reload request"<<endl;
+  for(auto iter = g_waiters.begin(); iter != g_waiters.end(); ) {
+    auto nreq = iter->first;
+    cout<<"  Erasing "<<(void*)iter->first<<endl;
+    iter = g_waiters.erase(iter);
+    emitAllEventsSince(nreq, 0, true); // triggers reload
+  }
+  cout<<"There are "<<g_waiters.size()<< " waiters"<<endl;
+  return 0;
+}
+catch(std::exception& e)
+{
+  cerr<<"reload error: "<<e.what()<<endl;
+  h2o_send_error_400(req, "Bad Request", "could not parse your request", 0);
+  return 0;
+}
+
+
 static int sendHandler(h2o_handler_t* handler, h2o_req_t* req)
 try
 {
@@ -221,9 +292,13 @@ try
   pbl.originator = msg["originator"];
   pbl.channel = msg["channel"].get<int>();
 
+
+  if(pbl.channel== 1 && !isAdmin(req)) {
+    h2o_send_error_400(req, "Bad Request", "PowerBlog could not understand your query", 0);
+    return 0;
+  }
+  
   g_db->insert(pbl);
-
-
 
   req->res.status = 200;
   req->res.reason = "OK";
@@ -336,6 +411,10 @@ try
   pathconf = h2o_config_register_path(hostconf, "/deleteEvent", 0);
   handler = h2o_create_handler(pathconf, sizeof(*handler));
   handler->on_req = deleteHandler;
+
+  pathconf = h2o_config_register_path(hostconf, "/reloadClients", 0);
+  handler = h2o_create_handler(pathconf, sizeof(*handler));
+  handler->on_req = reloadHandler;
 
   
   pathconf = h2o_config_register_path(hostconf, "/", 0);

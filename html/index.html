@@ -4,7 +4,7 @@
   <script src="ext/js.cookie.js"></script>
 </head>
 <body>
-  <center>Welkom bij de Mars NASA InSight Landing! Uitzending begint vanavond om 20:00 uur</center>
+  <center>Welkom bij de Mars NASA InSight Landing! Uitzending begint vanavond om 20:00 uur. <a href="uitleg.html">Uitleg.</a></center>
   <br/>
   <table width="100%">
     <tr>
@@ -15,10 +15,12 @@
       <td valign="top" width="40%">
         <iframe width="868" height="488" src="https://www.youtube.com/embed/z8NvcbkvxXw" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
         <center>
-        <b>Vul je naam in & stel hier je vraag!</b>
+        <b>Vul je naam in, type je vraag & druk op enter!</b>
         <br/>
-        <input id="name" type="text" value="Naam!"/>
+        Naam:<input size="15" id="name" type="text" value="Naam!"/>
         <textarea cols="80" id="msg" type="text"></textarea>
+        <br/>
+        <input type="button" value="Reload" hidden id="reload" onClick="javascript:triggerReload();"/>
         </center>
       </td>
       
