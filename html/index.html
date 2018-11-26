@@ -1,31 +1,38 @@
 <html>
 <head>
   <script src="ext/jquery-3.3.1.min.js"></script>
+  <script src="ext/js.cookie.js"></script>
 </head>
 <body>
+  <center>Welkom bij de Mars NASA InSight Landing! Uitzending begint vanavond om 20:00 uur</center>
   <br/>
   <table width="100%">
     <tr>
       <td valign="top" width="40%">
-        <input id="msg" type="text">
-        <br/>
         <div id="logs">
         </div>
       </td>
       <td valign="top" width="40%">
         <iframe width="868" height="488" src="https://www.youtube.com/embed/z8NvcbkvxXw" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        <center>
+        <b>Vul je naam in & stel hier je vraag!</b>
+        <br/>
+        <input id="name" type="text" value="Naam!"/>
+        <textarea cols="80" id="msg" type="text"></textarea>
+        </center>
       </td>
       
       <td valign="top" width="40%">
-        Stel hier je vraag:
-        <br/>
-        <input id="msg2" type="text">
+
         <div id="logs2">
           
         </div>
       </td>
     </tr>
   </table>
+
+  <br/>
+
   <script src="main.js"></script>
 </body>
 </html>

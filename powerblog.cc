@@ -33,7 +33,7 @@ auto prepareDatabase()
 
   storage.sync_schema();
   auto eventCount = storage.count<PBLogEvent>();
-  cout<<"On starteup, there were "<<eventCount<<" events"<<endl;
+  cout<<"On startup, there were "<<eventCount<<" events"<<endl;
   return storage;
 }
 
@@ -95,6 +95,7 @@ static void emitAllEventsSince(h2o_req_t* req, unsigned int since)
   cout<<" got "<<events.size()<<" events"<<endl;
   for(auto &e : events) {
     nlohmann::json event;
+    event["id"]=e.id;
     event["message"]=e.content;
     event["timestamp"]=e.timestamp;
     event["channel"]=e.channel;
@@ -105,6 +106,9 @@ static void emitAllEventsSince(h2o_req_t* req, unsigned int since)
   }
   allEvents["last"]=maxID;
   allEvents["numclients"]=g_waiters.size();
+  if(!since)
+    allEvents["restart"]=true;
+  
   req->res.status = 200;
   req->res.reason = "OK";
   h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, 
@@ -127,8 +131,6 @@ static int allEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
   return 0;
 }
 
-
-
 static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
 {
   if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("GET")))
@@ -142,7 +144,6 @@ static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
   if(auto pos = path.find("?since="); pos != string::npos) {
     uint32_t since = atoi(path.c_str() + pos + 7);
     cout<<remote.toString()<<" wants updates since " << since <<", path: "<<path<<endl;
-
 
     using namespace sqlite_orm;
     auto count = g_db->count<PBLogEvent>(where(c(&PBLogEvent::id) > since));
@@ -169,7 +170,44 @@ static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
 }
 
 
+static int deleteHandler(h2o_handler_t* handler, h2o_req_t* req)
+try
+{
+  if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("POST")))
+    return -1;
+
+  std::string content(req->entity.base, req->entity.len);
+  
+  g_db->remove<PBLogEvent>(atoi(content.c_str()));
+
+  req->res.status = 200;
+  req->res.reason = "OK";
+  h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, 
+                 NULL, H2O_STRLIT("application/json"));
+  nlohmann::json ret;
+  ret["status"]="ok";
+  std::string str = ret.dump();
+  h2o_send_inline(req, str.c_str(), str.size());
+  
+  cout<<"There are "<<g_waiters.size()<< " waiters that need to hear about our delete of id "<<content<<endl;
+  for(auto iter = g_waiters.begin(); iter != g_waiters.end(); ) {
+    auto nreq = iter->first;
+    cout<<"  Erasing "<<(void*)iter->first<<endl;
+    iter = g_waiters.erase(iter);
+    emitAllEventsSince(nreq, 0);
+  }
+  cout<<"There are "<<g_waiters.size()<< " waiters"<<endl;
+  return 0;
+}
+catch(std::exception& e)
+{
+  cerr<<"sendEvent error: "<<e.what()<<endl;
+  h2o_send_error_400(req, "Bad Request", "could not parse your request", 0);
+  return 0;
+}
+
 static int sendHandler(h2o_handler_t* handler, h2o_req_t* req)
+try
 {
   if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("POST")))
     return -1;
@@ -180,21 +218,23 @@ static int sendHandler(h2o_handler_t* handler, h2o_req_t* req)
   pbl.id = 0;
   pbl.timestamp = time(0);
   pbl.content = msg["msg"];
-  pbl.originator = "unknown";
+  pbl.originator = msg["originator"];
   pbl.channel = msg["channel"].get<int>();
 
   g_db->insert(pbl);
 
+
+
   req->res.status = 200;
   req->res.reason = "OK";
   h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, 
-    NULL, H2O_STRLIT("application/json"));
+                 NULL, H2O_STRLIT("application/json"));
   nlohmann::json ret;
   ret["status"]="ok";
   std::string str = ret.dump();
   h2o_send_inline(req, str.c_str(), str.size());
-
-  cout<<"There are "<<g_waiters.size()<< " waiters that need to hear '"<<content<<"'"<<endl;
+  
+  cout<<"There are "<<g_waiters.size()<< " waiters that need to hear about "<<content<<endl;
   for(auto iter = g_waiters.begin(); iter != g_waiters.end(); ) {
     auto nreq = iter->first;
     auto since = iter->second;
@@ -204,8 +244,14 @@ static int sendHandler(h2o_handler_t* handler, h2o_req_t* req)
   }
   cout<<"There are "<<g_waiters.size()<< " waiters"<<endl;
   return 0;
-  
 }
+catch(std::exception& e)
+{
+  cerr<<"sendEvent error: "<<e.what()<<endl;
+  h2o_send_error_400(req, "Bad Request", "could not parse your request", 0);
+  return 0;
+}
+
 
 void forwarderServer()
 {
@@ -287,6 +333,11 @@ try
   handler = h2o_create_handler(pathconf, sizeof(*handler));
   handler->on_req = sendHandler;
 
+  pathconf = h2o_config_register_path(hostconf, "/deleteEvent", 0);
+  handler = h2o_create_handler(pathconf, sizeof(*handler));
+  handler->on_req = deleteHandler;
+
+  
   pathconf = h2o_config_register_path(hostconf, "/", 0);
   h2o_file_register(pathconf, "html", NULL, NULL, 0);
   
