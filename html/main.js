@@ -39,7 +39,8 @@ $(document).ready(function() {
 
     if(isAdmin())
         $("#reload").show();
-    
+    else
+        $("#reload").hide();
     $("#password").keyup(function(event){
         if(event.keyCode == 13) {
             Cookies.set('adminpw', $('#password').val());
@@ -55,10 +56,16 @@ $(document).ready(function() {
               obj.channel=1;
           else
               obj.channel=2;
+          
           obj.originator = $('#name').val();
-          if (obj.msg.length > 0)
-              $.post("sendEvent", JSON.stringify(obj));
-          $("#msg").val("");
+          if(obj.originator == "Naam!" || obj.originator=="") {
+              alert("Vul eerst een naam in!");
+          }
+          else {
+              if (obj.msg.length > 0)
+                  $.post("sendEvent", JSON.stringify(obj));
+              $("#msg").val("");
+          }
       }  
     });
 
@@ -85,7 +92,7 @@ $(document).ready(function() {
             if(data.msgs[x].channel==1)
 	        s1 = delstr + linkify(htmlEncode(data.msgs[x].message)) + "<hr/>" + s1;
             else if(data.msgs[x].channel==2)
-                s2 = htmlEncode(data.msgs[x].originator) + delstr + "<br/>" + htmlEncode(data.msgs[x].message) + "<hr/>" + s2;
+                s2 = '<i>'+htmlEncode(data.msgs[x].originator) + "</i>"+delstr + "<br/>" + htmlEncode(data.msgs[x].message) + "<hr/>" + s2;
 	}
 	$("#logs").html(s1+$("#logs").html());
         $("#logs2").html(s2+$("#logs2").html());

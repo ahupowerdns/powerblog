@@ -91,7 +91,7 @@ static void emitAllEventsSince(h2o_req_t* req, unsigned int since, bool mustRelo
 
   if(!mustReload) {
     using namespace sqlite_orm;
-    auto events = g_db->get_all<PBLogEvent>(where(c(&PBLogEvent::id) > since));
+    auto events = g_db->get_all<PBLogEvent>(where(c(&PBLogEvent::id) > since),order_by(&PBLogEvent::id) );
     unsigned int maxID=0;
     cout<<" got "<<events.size()<<" events"<<endl;
     for(auto &e : events) {
@@ -156,12 +156,6 @@ static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
 {
   if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("GET")))
     return -1;
-  for (unsigned int i = 0; i != req->headers.size; ++i) {
-    cout<<std::string(req->headers.entries[i].name->base, req->headers.entries[i].name->len);
-    cout<<": ";
-    cout<<std::string(req->headers.entries[i].value.base, req->headers.entries[i].value.len);
-    cout<<endl;
-  }
 
   
   string path(req->path.base, req->path.len);
