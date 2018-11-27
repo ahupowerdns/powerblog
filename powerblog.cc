@@ -54,13 +54,8 @@ void setupSSL(h2o_accept_ctx_t& accept_ctx)
   SSL_CTX_set_options(accept_ctx.ssl_ctx, SSL_OP_NO_SSLv2);
   SSL_CTX_set_ecdh_auto(accept_ctx.ssl_ctx, 1);
 
-  /*
-   /etc/letsencrypt/live/live.powerdns.org/fullchain.pem
-   Your key file has been saved at:
-   /etc/letsencrypt/live/live.powerdns.org/privkey.pem
-  */
-  const char cert_file[] = "/etc/letsencrypt/live/live.powerdns.org/fullchain.pem";
-  const char key_file[]="/etc/letsencrypt/live/live.powerdns.org/privkey.pem";
+  const char cert_file[] = "./fullchain.pem";
+  const char key_file[]="./privkey.pem";
     
   
 /* load certificate and private key */
