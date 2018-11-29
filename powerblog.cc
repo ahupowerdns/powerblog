@@ -1,5 +1,5 @@
-#define H2O_USE_EPOLL 1
-#include "h2o.h"
+#include "h2o-pp.hh"
+
 #include <nlohmann/json.hpp>
 #include "sqlite_orm.h"
 #include <iostream>
@@ -139,7 +139,7 @@ bool isAdmin(h2o_req_t* req)
     // cookie: name=ahu
     if(hdr=="cookie") {
       val.assign(req->headers.entries[i].value.base, req->headers.entries[i].value.len);
-      if(val.find("adminpw=123456789") != string::npos)
+      if(val.find("adminpw=megageheim") != string::npos)
         return true;
     }
   }
@@ -319,56 +319,19 @@ catch(std::exception& e)
 
 void forwarderServer()
 {
-  h2o_globalconf_t config;
-  h2o_context_t ctx;
-  h2o_accept_ctx_t accept_ctx;
+  H2OWebserver h2s;
 
-  h2o_config_init(&config);
-  h2o_hostconf_t* hostconf = h2o_config_register_host(&config, h2o_iovec_init(H2O_STRLIT("default")), 65535);
+  h2s.addHandler("/",  [](h2o_handler_t* handler, h2o_req_t* req)
+                 {
+                   h2o_send_redirect(req, 301, "Moved Permanently", H2O_STRLIT("https://live.powerdns.org/"));
+                   return 0;
+                 });
+  
+  ComboAddress addr("0.0.0.0", 80);
+  auto ctx = h2s.addContext();
+  h2s.addListener(addr, ctx);
 
-  h2o_pathconf_t *pathconf = h2o_config_register_path(hostconf, "/", 0);
-  h2o_handler_t *handler = h2o_create_handler(pathconf, sizeof(*handler));
-  handler->on_req = [](h2o_handler_t* handler, h2o_req_t* req)
-    {
-      h2o_send_redirect(req, 301, "Moved Permanently", H2O_STRLIT("https://live.powerdns.org/"));
-      return 0;
-    };
-  
-  h2o_context_init(&ctx, h2o_evloop_create(), &config);
-  
-  accept_ctx.ctx = &ctx;
-  accept_ctx.hosts = config.hosts;
-  accept_ctx.ssl_ctx=0;
-  
-  struct sockaddr_in addr;
-  int fd, reuseaddr_flag = 1;
-  h2o_socket_t *sock;
-  
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(0);
-  addr.sin_port = htons(80);
-  
-  if ((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1 ||
-      setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_flag, sizeof(reuseaddr_flag)) != 0 ||
-      bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, SOMAXCONN) != 0) {
-    throw runtime_error("Unable to bind to socket: "+string(strerror(errno)));
-  }
-
-  sock = h2o_evloop_socket_create(ctx.loop, fd, H2O_SOCKET_FLAG_DONT_READ);
-  sock->data = &accept_ctx;
-  h2o_socket_read_start(sock, [](h2o_socket_t *listener, const char *err) {
-      if (err != NULL) {
-        return;
-      }
-      h2o_socket_t *sock;
-      
-      if ((sock = h2o_evloop_socket_accept(listener)) == NULL)
-        return;
-      h2o_accept((h2o_accept_ctx_t*)listener->data, sock);
-    });
-  while (h2o_evloop_run(ctx.loop, INT32_MAX) == 0)
-    ;
+  h2s.runLoop();
 
 }
 
