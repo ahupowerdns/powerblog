@@ -22,11 +22,12 @@ h2o_hostconf_t* H2OWebserver::addHost(const std::string_view hostname, int port)
 
 void H2OWebserver::addListener(const ComboAddress& addr, h2o_accept_ctx_t* accept_ctx)
 {
-  int reuseaddr_flag = 1;
+  int one = 1;
 
   int fd;
   if ((fd = socket(addr.sin4.sin_family, SOCK_STREAM, 0)) == -1 ||
-      setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_flag, sizeof(reuseaddr_flag)) != 0 ||
+      setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) != 0 ||
+      (addr.sin4.sin_family == AF_INET6 && (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof(one)) != 0)) ||
       bind(fd, (struct sockaddr *)&addr, addr.getSocklen()) != 0 || listen(fd, SOMAXCONN) != 0) {
     throw runtime_error("Unable to bind to socket: "+string(strerror(errno)));
   }
@@ -92,8 +93,8 @@ h2o_accept_ctx_t* H2OWebserver::addSSLContext(const std::string_view certificate
   if(SSL_CTX_use_PrivateKey_file(accept_ctx->ssl_ctx, key_file, SSL_FILETYPE_PEM) != 1) {
     throw std::runtime_error("private file");
   }
-  
-  if(SSL_CTX_set_cipher_list(accept_ctx->ssl_ctx, !ciphers.empty() ? &ciphers[0] : "DEFAULT:!MD5:!DSS:!DES:!RC4:!RC2:!SEED:!IDEA:!NULL:!ADH:!EXP:!SRP:!PSK") != 1) {
+  // "DEFAULT:!MD5:!DSS:!DES:!RC4:!RC2:!SEED:!IDEA:!NULL:!ADH:!EXP:!SRP:!PSK"
+  if(SSL_CTX_set_cipher_list(accept_ctx->ssl_ctx, !ciphers.empty() ? &ciphers[0] : "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256" ) != 1) {
     throw std::runtime_error("algorithms");
   }
 

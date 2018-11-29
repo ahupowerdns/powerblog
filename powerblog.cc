@@ -42,39 +42,6 @@ using DBType=decltype(prepareDatabase());
 DBType* g_db;
 
 
-void setupSSL(h2o_accept_ctx_t& accept_ctx)
-{
-  SSL_load_error_strings();
-  SSL_library_init();
-  OpenSSL_add_all_algorithms();
-
-  accept_ctx.ssl_ctx = SSL_CTX_new(SSLv23_server_method());
-  accept_ctx.expect_proxy_line = 0; // makes valgrind happy
-
-  SSL_CTX_set_options(accept_ctx.ssl_ctx, SSL_OP_NO_SSLv2);
-  SSL_CTX_set_ecdh_auto(accept_ctx.ssl_ctx, 1);
-
-  const char cert_file[] = "./fullchain.pem";
-  const char key_file[]="./privkey.pem";
-    
-  
-/* load certificate and private key */
-  if(SSL_CTX_use_certificate_chain_file(accept_ctx.ssl_ctx, cert_file) != 1) {
-    fprintf(stderr, "an error occurred while trying to load server certificate file:%s\n", cert_file);
-    throw std::runtime_error("certificate key");
-  }
-  
-  if(SSL_CTX_use_PrivateKey_file(accept_ctx.ssl_ctx, key_file, SSL_FILETYPE_PEM) != 1) {
-    fprintf(stderr, "an error occurred while trying to load private key file:%s\n", key_file);
-    throw std::runtime_error("private key");
-  }
-
-  char ciphers[]="DEFAULT:!MD5:!DSS:!DES:!RC4:!RC2:!SEED:!IDEA:!NULL:!ADH:!EXP:!SRP:!PSK";
-  if(SSL_CTX_set_cipher_list(accept_ctx.ssl_ctx, ciphers) != 1) {
-    fprintf(stderr, "ciphers could not be set: %s\n", ciphers);
-    throw std::runtime_error("algorithms");
-  }
-}
 
 std::map<h2o_req_t*, unsigned int> g_waiters;
 
@@ -316,102 +283,38 @@ catch(std::exception& e)
   return 0;
 }
 
-
-void forwarderServer()
-{
-  H2OWebserver h2s;
-
-  h2s.addHandler("/",  [](h2o_handler_t* handler, h2o_req_t* req)
-                 {
-                   h2o_send_redirect(req, 301, "Moved Permanently", H2O_STRLIT("https://live.powerdns.org/"));
-                   return 0;
-                 });
-  
-  ComboAddress addr("0.0.0.0", 80);
-  auto ctx = h2s.addContext();
-  h2s.addListener(addr, ctx);
-
-  h2s.runLoop();
-
-}
-
 int main()
 try
 {
   signal(SIGPIPE, SIG_IGN);
   g_db = new DBType(prepareDatabase());
-  
-  h2o_globalconf_t config;
-  h2o_context_t ctx;
-  h2o_accept_ctx_t accept_ctx;
-  
-  h2o_config_init(&config);
-  h2o_hostconf_t* hostconf = h2o_config_register_host(&config, h2o_iovec_init(H2O_STRLIT("default")), 65535);
 
-  h2o_pathconf_t *pathconf = h2o_config_register_path(hostconf, "/allEvents", 0);
-  h2o_handler_t *handler = h2o_create_handler(pathconf, sizeof(*handler));
-  handler->on_req = allEventsHandler;
+  H2OWebserver h2s("live.powerdns.org", 443);
 
-  pathconf = h2o_config_register_path(hostconf, "/newEvents", 0);
-  handler = h2o_create_handler(pathconf, sizeof(*handler));
-  handler->on_req = newEventsHandler;
+  h2s.addHandler("/allEvents", allEventsHandler);
+  h2s.addHandler("/newEvents", newEventsHandler);
+  h2s.addHandler("/sendEvent", sendHandler);
+  h2s.addHandler("/deleteEvent", deleteHandler);
+  h2s.addHandler("/reloadClients", reloadHandler);
+  h2s.addDirectory("/", "./html/");
 
-  pathconf = h2o_config_register_path(hostconf, "/sendEvent", 0);
-  handler = h2o_create_handler(pathconf, sizeof(*handler));
-  handler->on_req = sendHandler;
-
-  pathconf = h2o_config_register_path(hostconf, "/deleteEvent", 0);
-  handler = h2o_create_handler(pathconf, sizeof(*handler));
-  handler->on_req = deleteHandler;
-
-  pathconf = h2o_config_register_path(hostconf, "/reloadClients", 0);
-  handler = h2o_create_handler(pathconf, sizeof(*handler));
-  handler->on_req = reloadHandler;
-
+  auto plaintext = h2s.addHost("live.powerdns.org", 80);
+  h2s.addHandler("/", [](h2o_handler_t* handler, h2o_req_t* req)
+                 {
+                   h2o_send_redirect(req, 301, "Moved Permanently", H2O_STRLIT("https://live.powerdns.org/"));
+                   return 0;
+                 }, plaintext); 
   
-  pathconf = h2o_config_register_path(hostconf, "/", 0);
-  h2o_file_register(pathconf, "html", NULL, NULL, 0);
-  
-  h2o_context_init(&ctx, h2o_evloop_create(), &config);
-  
-  accept_ctx.ctx = &ctx;
-  accept_ctx.hosts = config.hosts;
+  auto sslactx = h2s.addSSLContext("./fullchain.pem", "./privkey.pem");
 
-  setupSSL(accept_ctx);
-  
-  struct sockaddr_in addr;
-  int fd, reuseaddr_flag = 1;
-  h2o_socket_t *sock;
-  
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(0);
-  addr.sin_port = htons(443);
-  
-  if ((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1 ||
-      setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_flag, sizeof(reuseaddr_flag)) != 0 ||
-      bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, SOMAXCONN) != 0) {
-    throw runtime_error("Unable to bind to socket: "+string(strerror(errno)));
-  }
+  h2s.addListener(ComboAddress("0.0.0.0", 443),sslactx);
+  h2s.addListener(ComboAddress("::", 443), sslactx);
 
-  sock = h2o_evloop_socket_create(ctx.loop, fd, H2O_SOCKET_FLAG_DONT_READ);
-  sock->data = &accept_ctx;
-  h2o_socket_read_start(sock, [](h2o_socket_t *listener, const char *err) {
-      if (err != NULL) {
-        return;
-      }
-      h2o_socket_t *sock;
-      
-      if ((sock = h2o_evloop_socket_accept(listener)) == NULL)
-        return;
-      h2o_accept((h2o_accept_ctx_t*)listener->data, sock);
-    });
-
-  std::thread fwthread(forwarderServer);
-  fwthread.detach();
+  auto actx = h2s.addContext();
+  h2s.addListener(ComboAddress("0.0.0.0", 80), actx);
+  h2s.addListener(ComboAddress("::", 80), actx);
   
-  while (h2o_evloop_run(ctx.loop, INT32_MAX) == 0)
-    ;
+  h2s.runLoop();
 }
 catch(std::exception& e)
 {
