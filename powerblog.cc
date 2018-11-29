@@ -328,8 +328,8 @@ void forwarderServer()
                  });
   
   ComboAddress addr("0.0.0.0", 80);
-
-  h2s.addListener(addr);
+  auto ctx = h2s.addContext();
+  h2s.addListener(addr, ctx);
 
   h2s.runLoop();
 

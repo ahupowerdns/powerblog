@@ -3,25 +3,21 @@
 
 using namespace std;
 
-H2OWebserver::H2OWebserver(const std::string_view hostname)
+H2OWebserver::H2OWebserver(const std::string_view hostname, int port)
 {
-
   memset(&d_ctx, 0, sizeof(d_ctx));
   memset(&d_config, 0, sizeof(d_config));
   
   h2o_config_init(&d_config);
 
-  // for multi host listening, this needs to be a separate method
-  d_hostconf = addHost(hostname);
+  d_hostconf = addHost(hostname, port); // this is the default host
 
   h2o_context_init(&d_ctx, h2o_evloop_create(), &d_config);
-
 }
 
-h2o_hostconf_t* H2OWebserver::addHost(const std::string_view hostname)
+h2o_hostconf_t* H2OWebserver::addHost(const std::string_view hostname, int port)
 {
-  cout << &hostname[0]<<", " <<hostname.length() << endl;
-  return h2o_config_register_host(&d_config, h2o_iovec_init(&hostname[0], hostname.length()), 65535);
+  return h2o_config_register_host(&d_config, h2o_iovec_init(&hostname[0], hostname.length()), port);
 }
 
 void H2OWebserver::addListener(const ComboAddress& addr, h2o_accept_ctx_t* accept_ctx)
@@ -37,6 +33,7 @@ void H2OWebserver::addListener(const ComboAddress& addr, h2o_accept_ctx_t* accep
 
   h2o_socket_t *sock = h2o_evloop_socket_create(d_ctx.loop, fd, H2O_SOCKET_FLAG_DONT_READ);
   sock->data = accept_ctx;
+
   h2o_socket_read_start(sock, [](h2o_socket_t *listener, const char *err) {
       if (err != NULL) {
         return;
@@ -57,7 +54,7 @@ void H2OWebserver::addHandler(const std::string& path, handler_t* func, h2o_host
   handler->on_req = func;
 }
 
-h2o_accept_ctx_t* H2OWebserver::getContext()
+h2o_accept_ctx_t* H2OWebserver::addContext()
 {
   auto accept_ctx = new h2o_accept_ctx_t();
   memset(accept_ctx, 0, sizeof(h2o_accept_ctx_t));
@@ -67,7 +64,7 @@ h2o_accept_ctx_t* H2OWebserver::getContext()
 }
 
 
-h2o_accept_ctx_t* H2OWebserver::getSSLContext(const std::string_view certificate, const std::string_view key, const std::string_view ciphers)
+h2o_accept_ctx_t* H2OWebserver::addSSLContext(const std::string_view certificate, const std::string_view key, const std::string_view ciphers)
 {
   auto accept_ctx = new h2o_accept_ctx_t();
   memset(accept_ctx, 0, sizeof(h2o_accept_ctx_t));
@@ -79,7 +76,6 @@ h2o_accept_ctx_t* H2OWebserver::getSSLContext(const std::string_view certificate
   OpenSSL_add_all_algorithms();
 
   accept_ctx->ssl_ctx = SSL_CTX_new(SSLv23_server_method());
-  accept_ctx->expect_proxy_line = 0; // makes valgrind happy
 
   SSL_CTX_set_options(accept_ctx->ssl_ctx, SSL_OP_NO_SSLv2);
   SSL_CTX_set_ecdh_auto(accept_ctx->ssl_ctx, 1);
@@ -96,8 +92,8 @@ h2o_accept_ctx_t* H2OWebserver::getSSLContext(const std::string_view certificate
   if(SSL_CTX_use_PrivateKey_file(accept_ctx->ssl_ctx, key_file, SSL_FILETYPE_PEM) != 1) {
     throw std::runtime_error("private file");
   }
-
-  if(SSL_CTX_set_cipher_list(accept_ctx->ssl_ctx, &ciphers[0]) != 1) {
+  
+  if(SSL_CTX_set_cipher_list(accept_ctx->ssl_ctx, !ciphers.empty() ? &ciphers[0] : "DEFAULT:!MD5:!DSS:!DES:!RC4:!RC2:!SEED:!IDEA:!NULL:!ADH:!EXP:!SRP:!PSK") != 1) {
     throw std::runtime_error("algorithms");
   }
 
@@ -109,4 +105,11 @@ void H2OWebserver::runLoop()
 {
   while (h2o_evloop_run(d_ctx.loop, INT32_MAX) == 0)
     ;
+}
+
+
+void H2OWebserver::addDirectory(const std::string_view path, const std::string_view directory, h2o_hostconf_t* hconf)
+{
+  h2o_pathconf_t* pathconf = h2o_config_register_path(hconf ? hconf : d_hostconf, &path[0], 0);
+  h2o_file_register(pathconf, &directory[0], NULL, NULL, 0);
 }
