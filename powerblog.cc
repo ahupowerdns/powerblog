@@ -9,6 +9,9 @@
 #include <thread>
 using namespace std;
 
+
+
+
 struct PBLogEvent
 {
   unsigned int id;
@@ -41,8 +44,6 @@ using DBType=decltype(prepareDatabase());
 
 DBType* g_db;
 
-
-
 std::map<h2o_req_t*, unsigned int> g_waiters;
 
 static void emitAllEventsSince(h2o_req_t* req, unsigned int since, bool mustReload=false)
@@ -55,7 +56,6 @@ static void emitAllEventsSince(h2o_req_t* req, unsigned int since, bool mustRelo
     using namespace sqlite_orm;
     auto events = g_db->get_all<PBLogEvent>(where(c(&PBLogEvent::id) > since),order_by(&PBLogEvent::id) );
     unsigned int maxID=0;
-    cout<<" got "<<events.size()<<" events"<<endl;
     for(auto &e : events) {
       nlohmann::json event;
       event["id"]=e.id;
@@ -99,34 +99,32 @@ static int allEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
 
 bool isAdmin(h2o_req_t* req)
 {
-  string hdr;
-  string val;
   for (unsigned int i = 0; i != req->headers.size; ++i) {
-    hdr.assign(req->headers.entries[i].name->base, req->headers.entries[i].name->len);
+    std::string_view hdr(req->headers.entries[i].name->base, req->headers.entries[i].name->len);
+
     // cookie: name=ahu
     if(hdr=="cookie") {
-      val.assign(req->headers.entries[i].value.base, req->headers.entries[i].value.len);
+      string_view val = convert(req->headers.entries[i].value);
       if(val.find("adminpw=megageheim") != string::npos)
         return true;
     }
   }
-
+  
   return false;
 }
 
 static int newEventsHandler(h2o_handler_t* handler, h2o_req_t* req)
 {
-  if (!h2o_memis(req->method.base, req->method.len, H2O_STRLIT("GET")))
+  if(convert(req->method) != "GET")
     return -1;
-
   
-  string path(req->path.base, req->path.len);
+  string_view path = convert(req->path);
   h2o_socket_t* sock = req->conn->callbacks->get_socket(req->conn);
   ComboAddress remote;
   h2o_socket_getpeername(sock, (struct sockaddr*)&remote);
 
   if(auto pos = path.find("?since="); pos != string::npos) {
-    uint32_t since = atoi(path.c_str() + pos + 7);
+    uint32_t since = atoi(&path.at(pos + 7));
     cout<<remote.toString()<<" wants updates since " << since <<", path: "<<path<<endl;
 
     using namespace sqlite_orm;
@@ -283,6 +281,7 @@ catch(std::exception& e)
   return 0;
 }
 
+
 int main()
 try
 {
@@ -301,6 +300,8 @@ try
   auto plaintext = h2s.addHost("live.powerdns.org", 80);
   h2s.addHandler("/", [](h2o_handler_t* handler, h2o_req_t* req)
                  {
+                   std::string_view path=convert(req->path);
+                   cout << path << endl;
                    h2o_send_redirect(req, 301, "Moved Permanently", H2O_STRLIT("https://live.powerdns.org/"));
                    return 0;
                  }, plaintext); 

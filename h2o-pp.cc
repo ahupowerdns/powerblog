@@ -48,11 +48,49 @@ void H2OWebserver::addListener(const ComboAddress& addr, h2o_accept_ctx_t* accep
 
 }
 
-void H2OWebserver::addHandler(const std::string& path, handler_t* func, h2o_hostconf_t* host)
+void H2OWebserver::addHandler(const std::string& path, nhandler_t* func, h2o_hostconf_t* host)
 {
   h2o_pathconf_t *pathconf = h2o_config_register_path(host ? host : d_hostconf, &path[0], 0);
+
   h2o_handler_t *handler = h2o_create_handler(pathconf, sizeof(*handler));
   handler->on_req = func;
+}
+
+void H2OWebserver::addHandler(const std::string& path, shandler_t* func, h2o_hostconf_t* host)
+{
+  h2o_pathconf_t *pathconf = h2o_config_register_path(host ? host : d_hostconf, &path[0], 0);
+
+  MultiHandler *handler = (MultiHandler*)h2o_create_handler(pathconf, sizeof(*handler));
+  handler->shandler = func;
+  handler->handler.on_req=H2OWebserver::mwrapper;
+}
+
+void H2OWebserver::addHandler(const std::string& path, jhandler_t* func, h2o_hostconf_t* host)
+{
+  h2o_pathconf_t *pathconf = h2o_config_register_path(host ? host : d_hostconf, &path[0], 0);
+  MultiHandler *handler = (MultiHandler*)h2o_create_handler(pathconf, sizeof(*handler));
+  handler->jhandler = func;
+  handler->handler.on_req=H2OWebserver::mwrapper;
+}
+
+
+int H2OWebserver::mwrapper(h2o_handler_t* handler, h2o_req_t* req)
+{
+  MultiHandler* shandler = (MultiHandler*)handler;
+  string mimetype, content;
+  if(shandler->shandler) {
+    std::tie(mimetype,content) = shandler->shandler(handler, req);
+  }
+  else {
+    mimetype = "application/json";
+    content = shandler->jhandler(handler,req).dump();
+  }
+  req->res.status = 200;
+  req->res.reason = "OK";
+  h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, 
+                 NULL, mimetype.c_str(), mimetype.size());
+  h2o_send_inline(req, content.c_str(), content.length());
+  return 0;
 }
 
 h2o_accept_ctx_t* H2OWebserver::addContext()
@@ -113,4 +151,9 @@ void H2OWebserver::addDirectory(const std::string_view path, const std::string_v
 {
   h2o_pathconf_t* pathconf = h2o_config_register_path(hconf ? hconf : d_hostconf, &path[0], 0);
   h2o_file_register(pathconf, &directory[0], NULL, NULL, 0);
+}
+
+std::string_view convert(const h2o_iovec_t& vec)
+{
+  return std::string_view(vec.base, vec.len);
 }
