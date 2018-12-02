@@ -9,9 +9,6 @@
 #include <thread>
 using namespace std;
 
-
-
-
 struct PBLogEvent
 {
   unsigned int id;
