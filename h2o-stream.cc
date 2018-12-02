@@ -94,9 +94,6 @@ int streamHandler(h2o_handler_t* handler, h2o_req_t* req)
   h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, 
                  NULL, H2O_STRLIT("octet/stream"));
       
-
-
-  
   // gather initial data from SQL query, store it in buf
 
   auto db = new DBType(prepareDatabase());
