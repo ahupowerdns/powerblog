@@ -107,6 +107,58 @@ provides a `std::string` compatible view of the data.
 More details are in
 [h2o-real.cc](https://github.com/ahupowerdns/powerblog/blob/master/h2o-real.cc).
 
+# Accessing URL parameters & headers
+`libh2o` really is an HTTP library and not so much a URL parsing library.
+This is one area where `h2o-pp` does extra lifting.
+
+First, various request headers:
+
+```
+  h2s.addHandler("/", [](auto handler, auto req) {
+      req->res.status = 200;
+      req->res.reason = "OK";
+
+      auto authority = convert(req->input.authority), method=convert(req->input.method), path=convert(req->input.path);
+      cout<<"authority: "<<authority<<endl;
+      cout<<"method: "<<method<<endl;
+      cout<<"path: "<<path<<", "<<req->input.query_at<<endl;
+```
+
+This accesses the authority ('host name'), the method (GET/POST) and the
+path. For the path, it also tells us where the first '?' is, where the query
+starts.
+
+To access the URL parameters, do:
+```
+      if(req->input.query_at != SIZE_MAX) {
+        std::string_view query = path;
+        query.remove_prefix(req->input.query_at + 1);
+
+        auto dec = urlParameterDecode(query);
+        for(const auto& p : dec) {
+          cout << "'"<<p.first<<"' = '"<<p.second<<"'"<<endl;
+        }
+      }
+```
+
+This syntax is provisional and will likely be replaced. 
+
+To access headers from a handler, try:
+
+```
+  for (unsigned int i = 0; i != req->headers.size; ++i) {
+    std::string_view hdr = convert(req->headers.entries[i].name); 
+
+    if(hdr=="cookie") {
+      auto val = convert(req->headers.entries[i].value);
+      // cookies are now in 'val'
+    }
+  }
+
+```
+
+# Advanced
+
 ## Streaming output
 Queries that generate large amounts of output are typically buffered in
 memory in less powerful HTTP libraries. `libh2o` however offers us the
@@ -236,3 +288,6 @@ void proceedSending(h2o_generator_t *self, h2o_req_t *req)
 This stores at most 50000 events & then sends them off to the client. If we
 found that we are at the end of the results, we set the
 `H2O_SEND_STATE_FINAL` flag, which tells `libh2o` we are done.
+
+More details are in
+[h2o-stream.cc](https://github.com/ahupowerdns/powerblog/blob/master/h2o-stream.cc).
