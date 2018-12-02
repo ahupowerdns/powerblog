@@ -20,6 +20,10 @@ available since the `h2o` handles are exposed.
 More about `libh2o` can be found in the [documentation we
 contributed](https://powerdns.org/libh2o).
 
+Meanwhile, all methods and functions of `h2o-pp` are described in the
+[h2o-pp.hh](https://github.com/ahupowerdns/powerblog/blob/master/h2o-pp.hh
+header file.
+
 ## Hello world
 This small sample below delivers an HTTP/2 & TLS-enabled webserver, serving
 files, a plain text string, a tiny HTML page and a JSON object:
