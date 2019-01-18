@@ -1,6 +1,6 @@
 #pragma once
 #define H2O_USE_EPOLL 1
-#include "h2o.h"
+#include <h2o.h>
 #include <string>
 #include <functional>
 #include "comboaddress.hh"
@@ -37,6 +37,9 @@ struct H2OWebserver
   
   //! Add a directory to be served on a path. Defaults to adding it to the default host.
   void addDirectory(const std::string_view path, const std::string_view directory, h2o_hostconf_t* hconf=0);
+
+  //! Add a file to be server on a path. Allows hosting of individual file on a virtual path. Defaults to add it to the default host.
+  void addFile(const std::string_view path, const std::string_view file, h2o_hostconf_t* hconf=0);
 
   //! Call this to add a TLS context. Returns an accept context that can be used with addListener
   h2o_accept_ctx_t* addSSLContext(const std::string_view certificate, const std::string_view key, const std::string_view ciphers="");
