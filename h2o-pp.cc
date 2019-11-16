@@ -28,7 +28,7 @@ void H2OWebserver::addListener(const ComboAddress& addr, h2o_accept_ctx_t* accep
   if ((fd = socket(addr.sin4.sin_family, SOCK_STREAM, 0)) == -1 ||
       setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) != 0 ||
       (addr.sin4.sin_family == AF_INET6 && (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof(one)) != 0)) ||
-      bind(fd, (struct sockaddr *)&addr, addr.getSocklen()) != 0 || listen(fd, SOMAXCONN) != 0) {
+      bind(fd, (const struct sockaddr *)&addr, addr.getSocklen()) != 0 || listen(fd, SOMAXCONN) != 0) {
     throw runtime_error("Unable to bind to socket: "+string(strerror(errno)));
   }
 
