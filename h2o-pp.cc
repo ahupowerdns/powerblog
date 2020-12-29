@@ -153,6 +153,13 @@ void H2OWebserver::addDirectory(const std::string_view path, const std::string_v
   h2o_file_register(pathconf, &directory[0], NULL, NULL, 0);
 }
 
+void H2OWebserver::addFile(const std::string_view path, const std::string_view file, h2o_hostconf_t* hconf)
+{
+  h2o_pathconf_t *pathconf = h2o_config_register_path(hconf ? hconf : d_hostconf, &path[0], 0);
+  h2o_mimemap_type_t *mimetype = h2o_mimemap_get_type_by_extension(d_hostconf->mimemap, h2o_get_filext(&file[0], strlen(&file[1])));
+  h2o_file_register_file(pathconf, &file[0], mimetype, 0);
+}
+
 std::string_view convert(const h2o_iovec_t& vec)
 {
   return std::string_view(vec.base, vec.len);
