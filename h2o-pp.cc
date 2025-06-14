@@ -51,7 +51,14 @@ void H2OWebserver::addListener(const ComboAddress& addr, h2o_accept_ctx_t* accep
 void H2OWebserver::addHandler(const std::string& path, nhandler_t* func, h2o_hostconf_t* host)
 {
   h2o_pathconf_t *pathconf = h2o_config_register_path(host ? host : d_hostconf, &path[0], 0);
+  h2o_compress_args_t ca;
 
+  ca.min_size = 0;
+  ca.gzip.quality = 6;
+  ca.brotli.quality = 6;
+  h2o_compress_register(pathconf, &ca);
+
+  
   h2o_handler_t *handler = h2o_create_handler(pathconf, sizeof(*handler));
   handler->on_req = func;
 }
@@ -59,6 +66,11 @@ void H2OWebserver::addHandler(const std::string& path, nhandler_t* func, h2o_hos
 void H2OWebserver::addHandler(const std::string& path, shandler_t* func, h2o_hostconf_t* host)
 {
   h2o_pathconf_t *pathconf = h2o_config_register_path(host ? host : d_hostconf, &path[0], 0);
+  h2o_compress_args_t ca;
+  ca.min_size = 0;
+  ca.gzip.quality = 6;
+  ca.brotli.quality = 6;
+  h2o_compress_register(pathconf, &ca);
 
   MultiHandler *handler = (MultiHandler*)h2o_create_handler(pathconf, sizeof(*handler));
   handler->shandler = func;
@@ -68,6 +80,12 @@ void H2OWebserver::addHandler(const std::string& path, shandler_t* func, h2o_hos
 void H2OWebserver::addHandler(const std::string& path, jhandler_t* func, h2o_hostconf_t* host)
 {
   h2o_pathconf_t *pathconf = h2o_config_register_path(host ? host : d_hostconf, &path[0], 0);
+  h2o_compress_args_t ca;
+  ca.min_size = 0;
+  ca.gzip.quality = 6;
+  ca.brotli.quality = 6;
+  h2o_compress_register(pathconf, &ca);
+    
   MultiHandler *handler = (MultiHandler*)h2o_create_handler(pathconf, sizeof(*handler));
   handler->jhandler = func;
   handler->handler.on_req=H2OWebserver::mwrapper;
